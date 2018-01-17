@@ -12,13 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Classes for converting parsed doc content into markdown pages."""
+"""A module for converting parsed doc content into markdown pages.
+
+The adjacent `parser` module creates `PageInfo` objects, containing all data
+necessary to document an element of the TensorFlow API.
+
+This module contains one public function, which handels the conversion of these
+`PageInfo` objects into a markdown string:
+
+    md_page = build_md_page(page_info)
+"""
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import inspect
+import itertools
+import textwrap
 
 
 def build_md_page(page_info):
@@ -48,11 +58,12 @@ def build_md_page(page_info):
 
 def _build_function_page(page_info):
   """Given a FunctionPageInfo object Return the page as an md string."""
-  parts = ['# %s\n\n' % page_info.full_name]
+  parts = [_Metadata(page_info.full_name).build_html()]
+  parts.append('# %s\n\n' % page_info.full_name)
 
-  if page_info.aliases:
-    parts.extend('### `%s`\n' % name
-                 for name in page_info.aliases)
+  if len(page_info.aliases) > 1:
+    parts.append('### Aliases:\n\n')
+    parts.extend('* `%s`\n' % name for name in page_info.aliases)
     parts.append('\n')
 
   if page_info.signature is not None:
@@ -72,10 +83,31 @@ def _build_function_page(page_info):
 
 def _build_class_page(page_info):
   """Given a ClassPageInfo object Return the page as an md string."""
-  parts = ['# {page_info.full_name}\n\n'.format(page_info=page_info)]
+  meta_data = _Metadata(page_info.full_name)
+  for item in itertools.chain(
+      page_info.classes,
+      page_info.properties,
+      page_info.methods,
+      page_info.other_members):
+    meta_data.append(item)
 
-  if page_info.aliases:
-    parts.extend('### `class %s`\n' % name for name in page_info.aliases)
+  parts = [meta_data.build_html()]
+
+  parts.append('# {page_info.full_name}\n\n'.format(page_info=page_info))
+
+  parts.append('## Class `%s`\n\n' % page_info.full_name.split('.')[-1])
+  if page_info.bases:
+    parts.append('Inherits From: ')
+
+    link_template = '[`{short_name}`]({url})'
+    parts.append(', '.join(
+        link_template.format(**base.__dict__) for base in page_info.bases))
+
+  parts.append('\n\n')
+
+  if len(page_info.aliases) > 1:
+    parts.append('### Aliases:\n\n')
+    parts.extend('* Class `%s`\n' % name for name in page_info.aliases)
     parts.append('\n')
 
   if page_info.defined_in is not None:
@@ -85,7 +117,8 @@ def _build_class_page(page_info):
   parts.append(page_info.guides)
   parts.append(page_info.doc.docstring)
   parts.append(_build_function_details(page_info.doc.function_details))
-  assert not page_info.doc.compatibility
+  parts.append(_build_compatibility(page_info.doc.compatibility))
+
   parts.append('\n\n')
 
   if page_info.classes:
@@ -107,7 +140,8 @@ def _build_class_page(page_info):
 
       parts.append(prop_info.doc.docstring)
       parts.append(_build_function_details(prop_info.doc.function_details))
-      assert not prop_info.doc.compatibility
+      parts.append(_build_compatibility(prop_info.doc.compatibility))
+
       parts.append('\n\n')
 
     parts.append('\n\n')
@@ -139,8 +173,8 @@ def _build_class_page(page_info):
   if page_info.other_members:
     parts.append('## Class Members\n\n')
 
-    # TODO(wicke): Document the value of the members,
-    #              at least for basic types.
+    # TODO(markdaoust): Document the value of the members,
+    #                   at least for basic types.
 
     h3 = '<h3 id="{short_name}"><code>{short_name}</code></h3>\n\n'
     others_member_headings = (h3.format(short_name=info.short_name)
@@ -152,11 +186,21 @@ def _build_class_page(page_info):
 
 def _build_module_page(page_info):
   """Given a ClassPageInfo object Return the page as an md string."""
+  meta_data = _Metadata(page_info.full_name)
 
-  parts = ['# Module: {full_name}\n\n'.format(full_name=page_info.full_name)]
+  # Objects with their own pages are not added to the matadata list for the
+  # module, as the only thing on the module page is a link to the object's page.
+  for item in page_info.other_members:
+    meta_data.append(item)
 
-  if page_info.aliases:
-    parts.extend('### Module `%s`\n' % name for name in page_info.aliases)
+  parts = [meta_data.build_html()]
+
+  parts.append(
+      '# Module: {full_name}\n\n'.format(full_name=page_info.full_name))
+
+  if len(page_info.aliases) > 1:
+    parts.append('### Aliases:\n\n')
+    parts.extend('* Module `%s`\n' % name for name in page_info.aliases)
     parts.append('\n')
 
   if page_info.defined_in is not None:
@@ -164,44 +208,70 @@ def _build_module_page(page_info):
     parts.append(str(page_info.defined_in))
 
   parts.append(page_info.doc.docstring)
+  parts.append(_build_compatibility(page_info.doc.compatibility))
+
   parts.append('\n\n')
-  parts.append('## Members\n\n')
 
-  # TODO(deannarubin): Make this list into a table.
-  for member_info in page_info.members:
-    if not member_info.is_link():
-      parts.append('Constant ' + member_info.short_name)
+  if page_info.modules:
+    parts.append('## Modules\n\n')
+    template = '[`{short_name}`]({url}) module'
+
+    for item in page_info.modules:
+      parts.append(template.format(**item.__dict__))
+
+      if item.doc.brief:
+        parts.append(': ' + item.doc.brief)
+
       parts.append('\n\n')
-      continue
 
-    suffix = ''
-    if inspect.isclass(member_info.obj):
-      link_text = 'class ' + member_info.short_name
-    elif inspect.isfunction(member_info.obj):
-      link_text = member_info.short_name + '(...)'
-    elif inspect.ismodule(member_info.obj):
-      link_text = member_info.short_name
-      suffix = ' module'
+  if page_info.classes:
+    parts.append('## Classes\n\n')
+    template = '[`class {short_name}`]({url})'
 
-    if member_info.doc.brief:
-      suffix = '%s: %s' % (suffix, member_info.doc.brief)
+    for item in page_info.classes:
+      parts.append(template.format(**item.__dict__))
 
-    parts.append('[`{link_text}`]({url}){suffix}'.format(
-        link_text=link_text, url=member_info.url, suffix=suffix))
-    parts.append('\n\n')
+      if item.doc.brief:
+        parts.append(': ' + item.doc.brief)
 
-  if page_info.members:
-    parts.pop()
+      parts.append('\n\n')
+
+  if page_info.functions:
+    parts.append('## Functions\n\n')
+    template = '[`{short_name}(...)`]({url})'
+
+    for item in page_info.functions:
+      parts.append(template.format(**item.__dict__))
+
+      if item.doc.brief:
+        parts.append(': ' + item.doc.brief)
+
+      parts.append('\n\n')
+
+  if page_info.other_members:
+    # TODO(markdaoust): Document the value of the members,
+    #                   at least for basic types.
+    parts.append('## Other Members\n\n')
+
+    for item in page_info.other_members:
+      parts.append('`{short_name}`\n\n'.format(**item.__dict__))
 
   return ''.join(parts)
 
 
 def _build_signature(obj_info):
   """Returns a md code block showing the function signature."""
-  signature_template = '\n'.join([
-      '``` python',
-      '{name}({sig})',
-      '```\n\n'])
+  # Special case tf.range, since it has an optional first argument
+  if obj_info.full_name == 'tf.range':
+    return (
+        '``` python\n'
+        "range(limit, delta=1, dtype=None, name='range')\n"
+        "range(start, limit, delta=1, dtype=None, name='range')\n"
+        '```\n\n')
+
+  parts = ['``` python']
+  parts.extend(['@' + dec for dec in obj_info.decorators])
+  signature_template = '{name}({sig})'
 
   if not obj_info.signature:
     sig = ''
@@ -211,17 +281,22 @@ def _build_signature(obj_info):
     sig = ',\n'.join('    %s' % sig_item for sig_item in obj_info.signature)
     sig = '\n'+sig+'\n'
 
-  return signature_template.format(name=obj_info.short_name, sig=sig)
+  parts.append(signature_template.format(name=obj_info.short_name, sig=sig))
+  parts.append('```\n\n')
+
+  return '\n'.join(parts)
 
 
 def _build_compatibility(compatibility):
-  """Return the compatability section as an md string."""
+  """Return the compatibility section as an md string."""
   parts = []
   sorted_keys = sorted(compatibility.keys())
   for key in sorted_keys:
 
     value = compatibility[key]
-    parts.append('\n\n#### %s compatibility\n%s\n' % (key, value))
+    # Dedent so that it does not trigger markdown code formatting.
+    value = textwrap.dedent(value)
+    parts.append('\n\n#### %s Compatibility\n%s\n' % (key.title(), value))
 
   return ''.join(parts)
 
@@ -232,9 +307,47 @@ def _build_function_details(function_details):
   for detail in function_details:
     sub = []
     sub.append('#### ' + detail.keyword + ':\n\n')
-    sub.append(detail.header)
+    sub.append(textwrap.dedent(detail.header))
     for key, value in detail.items:
-      sub.append('* <b>`%s`</b>:%s' % (key, value))
+      sub.append('* <b>`%s`</b>: %s' % (key, value))
     parts.append(''.join(sub))
 
   return '\n'.join(parts)
+
+
+class _Metadata(object):
+  """A class for building a page's Metadata block.
+
+  Attributes:
+    name: The name of the page being described by the Metadata block.
+  """
+
+  def __init__(self, name):
+    """Creata a Metadata builder.
+
+    Args:
+      name: The name of the page being described by the Metadata block.
+    """
+    self.name = name
+    self._content = []
+
+  def append(self, item):
+    """Add an item from the page to the Metadata block.
+
+    Args:
+      item: The parsed page section to add.
+    """
+    self._content.append(item.short_name)
+
+  def build_html(self):
+    """Return the Metadata block as an Html string."""
+    schema = 'http://developers.google.com/ReferenceObject'
+    parts = ['<div itemscope itemtype="%s">' % schema]
+
+    parts.append('<meta itemprop="name" content="%s" />' % self.name)
+    for item in self._content:
+      parts.append('<meta itemprop="property" content="%s"/>' % item)
+
+    parts.extend(['</div>', '', ''])
+
+    return '\n'.join(parts)

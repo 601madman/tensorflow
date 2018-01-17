@@ -23,7 +23,7 @@ namespace tensorflow {
 namespace grappler {
 
 class Cluster;
-class GrapplerItem;
+struct GrapplerItem;
 
 // An abstract interface for an algorithm for generating a candidate
 // optimization of a GrapplerItem for running on a cluster.
@@ -41,7 +41,7 @@ class GraphOptimizer {
                           GraphDef* optimized_graph) = 0;
 
   // Method invoked by the framework so that it can provide feedback
-  // on how well the "optimize_output" (produced as *output from a
+  // on how well the "optimized_graph" (produced as *optimized_graph from a
   // call to Optimize) performed.  Lower "result" scores are better.
   virtual void Feedback(Cluster* cluster, const GrapplerItem& item,
                         const GraphDef& optimized_graph, double result) = 0;

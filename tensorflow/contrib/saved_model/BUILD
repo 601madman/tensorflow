@@ -37,6 +37,31 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/core:protos_all_py",
+        "//tensorflow/python:framework_ops",
+        "//tensorflow/python:lib",
+        "//tensorflow/python:util",
+        "//tensorflow/python/saved_model:builder",
+        "//tensorflow/python/saved_model:constants",
+        "//tensorflow/python/saved_model:signature_constants",
+        "//tensorflow/python/saved_model:signature_def_utils",
+        "//tensorflow/python/saved_model:tag_constants",
+    ],
+)
+
+py_test(
+    name = "reader_test",
+    size = "small",
+    srcs = ["python/saved_model/reader_test.py"],
+    srcs_version = "PY2AND3",
+    visibility = ["//visibility:private"],
+    deps = [
+        ":saved_model_py",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:lib",
+        "//tensorflow/python:variables",
+        "//tensorflow/python/saved_model:builder",
+        "//tensorflow/python/saved_model:tag_constants",
     ],
 )
 
@@ -47,6 +72,7 @@ py_test(
     srcs_version = "PY2AND3",
     deps = [
         ":saved_model_py",
+        "//tensorflow/core:protos_all_py",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_for_generated_wrappers",

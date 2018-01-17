@@ -20,9 +20,12 @@ from __future__ import print_function
 import argparse
 import curses
 import tempfile
+import threading
 
 import numpy as np
+from six.moves import queue
 
+from tensorflow.python.debug.cli import cli_test_utils
 from tensorflow.python.debug.cli import curses_ui
 from tensorflow.python.debug.cli import debugger_cli_common
 from tensorflow.python.debug.cli import tensor_format
@@ -111,7 +114,7 @@ class MockCursesUI(curses_ui.CursesUI):
   def _screen_create_command_window(self):
     pass
 
-  def _screen_create_command_textbox(self, existing_command):
+  def _screen_create_command_textbox(self, existing_command=None):
     """Override to insert observer of existing commands.
 
     Used in testing of history navigation and tab completion.
@@ -306,6 +309,18 @@ class CursesTest(test_util.TensorFlowTestCase):
     self.assertEqual(0, ui._command_pointer)
     self.assertEqual([], ui._active_command_history)
     self.assertEqual("", ui._pending_command)
+
+  def testCursesUiInChildThreadStartsWithoutException(self):
+    result = queue.Queue()
+    def child_thread():
+      try:
+        MockCursesUI(40, 80)
+      except ValueError as e:
+        result.put(e)
+    t = threading.Thread(target=child_thread)
+    t.start()
+    t.join()
+    self.assertTrue(result.empty())
 
   def testRunUIExitImmediately(self):
     """Make sure that the UI can exit properly after launch."""
@@ -690,8 +705,8 @@ class CursesTest(test_util.TensorFlowTestCase):
     # The manually registered command, along with the automatically registered
     # exit commands should appear in the candidates.
     self.assertEqual(
-        [["a", "babble", "exit", "h", "help", "m", "mouse", "quit"]],
-        ui.candidates_lists)
+        [["a", "babble", "cfg", "config", "exit", "h", "help", "m", "mouse",
+          "quit"]], ui.candidates_lists)
 
     # The two candidates have no common prefix. So no command should have been
     # issued.
@@ -1042,13 +1057,10 @@ class CursesTest(test_util.TensorFlowTestCase):
     self.assertEqual(11, len(ui.scroll_messages))
 
     for i in range(11):
-      self.assertEqual([
-          "Tensor \"m\":", "", "array([[ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.]])"
-      ], ui.unwrapped_outputs[i].lines)
+      cli_test_utils.assert_lines_equal_ignoring_whitespace(
+          self, ["Tensor \"m\":", ""], ui.unwrapped_outputs[i].lines[:2])
+      self.assertEqual(
+          repr(np.ones([5, 5])).split("\n"), ui.unwrapped_outputs[i].lines[2:])
 
     self.assertEqual({
         0: None,
@@ -1151,13 +1163,10 @@ class CursesTest(test_util.TensorFlowTestCase):
     self.assertEqual(4, len(ui.output_array_pointer_indices))
 
     for i in range(4):
-      self.assertEqual([
-          "Tensor \"m\":", "", "array([[ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.],",
-          "       [ 1.,  1.,  1.,  1.,  1.]])"
-      ], ui.unwrapped_outputs[i].lines)
+      cli_test_utils.assert_lines_equal_ignoring_whitespace(
+          self, ["Tensor \"m\":", ""], ui.unwrapped_outputs[i].lines[:2])
+      self.assertEqual(
+          repr(np.ones([5, 5])).split("\n"), ui.unwrapped_outputs[i].lines[2:])
 
     self.assertEqual({
         0: None,
@@ -1631,6 +1640,25 @@ class ScrollBarTest(test_util.TensorFlowTestCase):
     self.assertEqual(curses_ui._SCROLL_DOWN_A_LINE,
                      scroll_bar.get_click_command(7))
     self.assertIsNone(scroll_bar.get_click_command(8))
+
+  def testClickCommandsAreCorrectForScrollBarNotAtZeroMinY(self):
+    scroll_bar = curses_ui.ScrollBar(0, 5, 1, 12, 10, 20)
+    self.assertIsNone(scroll_bar.get_click_command(0))
+    self.assertIsNone(scroll_bar.get_click_command(4))
+    self.assertEqual(curses_ui._SCROLL_UP_A_LINE,
+                     scroll_bar.get_click_command(5))
+    self.assertEqual(curses_ui._SCROLL_UP,
+                     scroll_bar.get_click_command(6))
+    self.assertEqual(curses_ui._SCROLL_UP,
+                     scroll_bar.get_click_command(7))
+    self.assertIsNone(scroll_bar.get_click_command(8))
+    self.assertEqual(curses_ui._SCROLL_DOWN,
+                     scroll_bar.get_click_command(10))
+    self.assertEqual(curses_ui._SCROLL_DOWN,
+                     scroll_bar.get_click_command(11))
+    self.assertEqual(curses_ui._SCROLL_DOWN_A_LINE,
+                     scroll_bar.get_click_command(12))
+    self.assertIsNone(scroll_bar.get_click_command(13))
 
 
 if __name__ == "__main__":
